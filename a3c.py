@@ -1,27 +1,23 @@
 #!/usr/bin/env python
-from skimage.transform import resize
-from skimage.color import rgb2gray
+import os
 import threading
-import tensorflow as tf
-import sys
-import random
-import numpy as np
 import time
+
 import gym
+import numpy as np
+import tensorflow as tf
 from keras import backend as K
-from keras.layers import Convolution2D, Flatten, Dense
-from collections import deque
+
 from a3c_model import build_policy_and_value_networks
-from keras import backend as K
 from atari_environment import AtariEnvironment
 
 # Path params
 EXPERIMENT_NAME = "breakout_a3c"
-SUMMARY_SAVE_PATH = "/Users/coreylynch/dev/async-rl/summaries/"+EXPERIMENT_NAME
-CHECKPOINT_SAVE_PATH = "/tmp/"+EXPERIMENT_NAME+".ckpt"
-CHECKPOINT_NAME = "/tmp/breakout_a3c.ckpt-5"
-CHECKPOINT_INTERVAL=5000
-SUMMARY_INTERVAL=5
+SUMMARY_SAVE_PATH = os.path.expanduser("~/async-rl/summaries/" + EXPERIMENT_NAME)
+CHECKPOINT_SAVE_PATH = os.path.expanduser("~/async-rl/checkpoints/" + EXPERIMENT_NAME + ".ckpt")
+CHECKPOINT_NAME = os.path.expanduser("~/async-rl/checkpoints/" + EXPERIMENT_NAME + "/breakout_a3c.ckpt-5")
+CHECKPOINT_INTERVAL = 5000
+SUMMARY_INTERVAL = 5
 # TRAINING = False
 TRAINING = True
 
@@ -44,10 +40,11 @@ GAMMA = 0.99
 # Optimization Params
 LEARNING_RATE = 0.00001
 
-#Shared global parameters
+# Shared global parameters
 T = 0
 TMAX = 80000000
 t_max = 32
+
 
 def sample_policy_action(num_actions, probs):
     """
@@ -62,6 +59,7 @@ def sample_policy_action(num_actions, probs):
     action_index = int(np.nonzero(histogram)[0])
     return action_index
 
+
 def actor_learner_thread(num, env, session, graph_ops, summary_ops, saver):
     # We use global shared counter T, and TMAX constant
     global TMAX, T
@@ -73,9 +71,10 @@ def actor_learner_thread(num, env, session, graph_ops, summary_ops, saver):
     r_summary_placeholder, update_ep_reward, val_summary_placeholder, update_ep_val, summary_op = summary_ops
 
     # Wrap env with AtariEnvironment helper class
-    env = AtariEnvironment(gym_env=env, resized_width=RESIZED_WIDTH, resized_height=RESIZED_HEIGHT, agent_history_length=AGENT_HISTORY_LENGTH)
+    env = AtariEnvironment(gym_env=env, resized_width=RESIZED_WIDTH, resized_height=RESIZED_HEIGHT,
+                           agent_history_length=AGENT_HISTORY_LENGTH)
 
-    time.sleep(5*num)
+    time.sleep(5 * num)
 
     # Set up per-episode counters
     ep_reward = 0
@@ -96,7 +95,7 @@ def actor_learner_thread(num, env, session, graph_ops, summary_ops, saver):
         t = 0
         t_start = t
 
-        while not (terminal or ((t - t_start)  == t_max)):
+        while not (terminal or ((t - t_start) == t_max)):
             # Perform action a_t according to policy pi(a_t | s_t)
             probs = session.run(p_network, feed_dict={s: [s_t]})[0]
             action_index = sample_policy_action(ACTIONS, probs)
@@ -104,7 +103,7 @@ def actor_learner_thread(num, env, session, graph_ops, summary_ops, saver):
             a_t[action_index] = 1
 
             if probs_summary_t % 100 == 0:
-                print "P, ", np.max(probs), "V ", session.run(v_network, feed_dict={s: [s_t]})[0][0]
+                print("P, ", np.max(probs), "V ", session.run(v_network, feed_dict={s: [s_t]})[0][0])
 
             s_batch.append(s_t)
             a_batch.append(a_t)
@@ -119,40 +118,44 @@ def actor_learner_thread(num, env, session, graph_ops, summary_ops, saver):
             T += 1
             ep_t += 1
             probs_summary_t += 1
-            
+
             s_t = s_t1
 
         if terminal:
             R_t = 0
         else:
-            R_t = session.run(v_network, feed_dict={s: [s_t]})[0][0] # Bootstrap from last state
+            R_t = session.run(v_network, feed_dict={s: [s_t]})[0][0]  # Bootstrap from last state
 
         R_batch = np.zeros(t)
-        for i in reversed(range(t_start, t)):
+        for i in reversed(list(range(t_start, t))):
             R_t = past_rewards[i] + GAMMA * R_t
             R_batch[i] = R_t
 
-        session.run(minimize, feed_dict={R : R_batch,
-                                         a : a_batch,
-                                         s : s_batch})
-        
+        session.run(minimize, feed_dict={R: R_batch,
+                                         a: a_batch,
+                                         s: s_batch})
+
         # Save progress every 5000 iterations
         if T % CHECKPOINT_INTERVAL == 0:
-            saver.save(session, CHECKPOINT_SAVE_PATH, global_step = T)
+            saver.save(session, CHECKPOINT_SAVE_PATH, global_step=T)
 
         if terminal:
             # Episode ended, collect stats and reset game
             session.run(update_ep_reward, feed_dict={r_summary_placeholder: ep_reward})
-            print "THREAD:", num, "/ TIME", T, "/ REWARD", ep_reward
+            print("THREAD:", num, "/ TIME", T, "/ REWARD", ep_reward)
             s_t = env.get_initial_state()
             terminal = False
             # Reset per-episode counters
             ep_reward = 0
             ep_t = 0
 
+
 def build_graph():
     # Create shared global policy and value networks
-    s, p_network, v_network, p_params, v_params = build_policy_and_value_networks(num_actions=ACTIONS, agent_history_length=AGENT_HISTORY_LENGTH, resized_width=RESIZED_WIDTH, resized_height=RESIZED_HEIGHT)
+    s, p_network, v_network, p_params, v_params = build_policy_and_value_networks(num_actions=ACTIONS,
+                                                                                  agent_history_length=AGENT_HISTORY_LENGTH,
+                                                                                  resized_width=RESIZED_WIDTH,
+                                                                                  resized_height=RESIZED_HEIGHT)
 
     # Shared global optimizer
     optimizer = tf.train.AdamOptimizer(LEARNING_RATE)
@@ -167,7 +170,8 @@ def build_graph():
     total_loss = p_loss + (0.5 * v_loss)
 
     minimize = optimizer.minimize(total_loss)
-    return s, a_t, R_t, minimize
+    return s, a_t, R_t, minimize, p_network, v_network
+
 
 # Set up some episode summary ops to visualize on tensorboard.
 def setup_summaries():
@@ -182,10 +186,11 @@ def setup_summaries():
     summary_op = tf.merge_all_summaries()
     return r_summary_placeholder, update_ep_reward, val_summary_placeholder, update_ep_val, summary_op
 
+
 def train(session, graph_ops, saver):
     # Set up game environments (one per thread)
     envs = [gym.make(GAME) for i in range(NUM_CONCURRENT)]
-    
+
     summary_ops = setup_summaries()
     summary_op = summary_ops[-1]
 
@@ -194,7 +199,9 @@ def train(session, graph_ops, saver):
     writer = tf.train.SummaryWriter(SUMMARY_SAVE_PATH, session.graph)
 
     # Start NUM_CONCURRENT training threads
-    actor_learner_threads = [threading.Thread(target=actor_learner_thread, args=(thread_id, envs[thread_id], session, graph_ops, summary_ops, saver)) for thread_id in range(NUM_CONCURRENT)]
+    actor_learner_threads = [threading.Thread(target=actor_learner_thread,
+                                              args=(thread_id, envs[thread_id], session, graph_ops, summary_ops, saver))
+                             for thread_id in range(NUM_CONCURRENT)]
     for t in actor_learner_threads:
         t.start()
 
@@ -212,44 +219,48 @@ def train(session, graph_ops, saver):
     for t in actor_learner_threads:
         t.join()
 
+
 def evaluation(session, graph_ops, saver):
     saver.restore(session, CHECKPOINT_NAME)
-    print "Restored model weights from ", CHECKPOINT_NAME
+    print("Restored model weights from ", CHECKPOINT_NAME)
     monitor_env = gym.make(GAME)
-    monitor_env.monitor.start('/tmp/'+EXPERIMENT_NAME+"/eval")
+    monitor_env.monitor.start('/tmp/' + EXPERIMENT_NAME + "/eval")
 
     # Unpack graph ops
     s, a_t, R_t, learning_rate, minimize, p_network, v_network = graph_ops
 
     # Wrap env with AtariEnvironment helper class
-    env = AtariEnvironment(gym_env=monitor_env, resized_width=RESIZED_WIDTH, resized_height=RESIZED_HEIGHT, agent_history_length=AGENT_HISTORY_LENGTH)
+    env = AtariEnvironment(gym_env=monitor_env, resized_width=RESIZED_WIDTH, resized_height=RESIZED_HEIGHT,
+                           agent_history_length=AGENT_HISTORY_LENGTH)
 
-    for i_episode in xrange(100):
+    for i_episode in range(100):
         s_t = env.get_initial_state()
         ep_reward = 0
         terminal = False
         while not terminal:
             monitor_env.render()
             # Forward the deep q network, get Q(s,a) values
-            probs = p_network.eval(session = session, feed_dict = {s : [s_t]})[0]
+            probs = p_network.eval(session=session, feed_dict={s: [s_t]})[0]
             action_index = sample_policy_action(ACTIONS, probs)
             s_t1, r_t, terminal, info = env.step(action_index)
             s_t = s_t1
             ep_reward += r_t
-        print ep_reward
+        print(ep_reward)
     monitor_env.monitor.close()
 
-def main(_):
-  g = tf.Graph()
-  with g.as_default(), tf.Session() as session:
-    K.set_session(session)
-    graph_ops = build_graph()
-    saver = tf.train.Saver()
 
-    if TRAINING:
-        train(session, graph_ops, saver)
-    else:
-        evaluation(session, graph_ops, saver)
+def main(_):
+    g = tf.Graph()
+    with g.as_default(), tf.Session() as session:
+        K.set_session(session)
+        graph_ops = build_graph()
+        saver = tf.train.Saver()
+
+        if TRAINING:
+            train(session, graph_ops, saver)
+        else:
+            evaluation(session, graph_ops, saver)
+
 
 if __name__ == "__main__":
-  tf.app.run()
+    tf.app.run()
